@@ -29,6 +29,9 @@ void  SetupTimer0(void);
 //Global Variables
 uint8_t RunTask_10ms = 0;
 
+
+volatile unsigned int StepSpeed = 0;
+
 //Create and instance of the encoder module
 Encoder PendulumPosition(EncoderChannel_A, EncoderChannel_B);
 
@@ -47,6 +50,39 @@ volatile struct MovementParms CurrentCart;
 volatile struct MovementParms EncoderValue;
 
 //**************************************
+//  Interrupt used to generate the servo 
+//  pulses
+//  The lower the address the higher is the priority level
+//  Vector Address 12 
+//**************************************
+ISR(TIMER1_COMPA_vect)  
+{   
+   if(StepSpeed < 64000)
+   {
+     //Check the direction pin and determine the position
+     if(CurrentCart.Direction == 1)
+     {
+        digitalWrite(DIR,1);
+        CurrentCart.Position++;
+     }
+     else
+     {
+       digitalWrite(DIR,0);
+       CurrentCart.Position--;
+     }
+  
+     //Step once
+     digitalWrite(STEP,1);
+     digitalWrite(STEP,0);
+   }
+   //Interrupt occurs when timer matches this value
+   //Larger velocity means smaller OCR1A value
+   //StepSpeed is calculated using another function and then stored 
+   //in a global variable to be accessed by the interrupt routine
+   OCR1A = StepSpeed;
+}
+
+//**************************************
 //  10 ms Task Rate
 //  Creates a periodic Task 
 //  Vector Address 15
@@ -56,6 +92,38 @@ ISR(TIMER0_COMPA_vect)
   RunTask_10ms = 1;
 }
 
+//*******************************************
+// WriteStepSize
+//
+// Pass in a velocity and update the step size
+// global variable which is read by the interrupt
+// to generate the stepper pulses. Speed is in 
+// the units mm/min. 
+//*******************************************
+void WriteStepSize(signed int Speed)
+{
+  //Set the direction pin based on the sign of the speed
+  if(Speed > 0)
+  {
+     CurrentCart.Direction = 1;
+  }
+  else
+  {
+     CurrentCart.Direction = 0;
+  } 
+  
+  //Check to prevent overflows, StepSpeed is 16 bit
+  if(Speed > 700 || Speed < -700)
+  {
+     //This is derived from the table above using a Power trendline
+     StepSpeed = (signed int)(9048739L/(abs(Speed)));
+  }
+  //This is like setting it to zero speed
+  else
+  {
+     StepSpeed = 65000;
+  }
+}
 //*********************************************
 //  SetupTimer0
 //
@@ -128,6 +196,8 @@ void setup()
   
   //Setup Timers
   SetupTimer0();
+
+  SetupTimer1();
   
   //enable interrupts
   sei();
@@ -140,6 +210,27 @@ void loop()
   {
     EncoderValue.Position = PendulumPosition.read();
     Serial.println(EncoderValue.Position);
+    
+    
+    digitalWrite(LED_YELLOW,HIGH);
+
+    if(digitalRead(SWITCH1))
+    {
+      //Some form of speed command
+      WriteStepSize(4000);
+      digitalWrite(LED_GREEN,HIGH);
+    }
+    else if(digitalRead(SWITCH2))
+    {
+      WriteStepSize(-4000);
+      digitalWrite(LED_RED,HIGH);
+    }
+    else
+    {
+      WriteStepSize(0);
+      digitalWrite(LED_GREEN,LOW);
+      digitalWrite(LED_RED,LOW);
+    }
     RunTask_10ms = 0;
   }
 }
