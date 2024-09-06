@@ -22,6 +22,9 @@
 #define  EncoderChannel_A  2
 #define  EncoderChannel_B  3
 
+#define  MAX_CART_VELOCITY  30000
+#define  MAX_CART_ACCELERATION  2000
+
 //Function prototypes
 void  SetupTimer1(void);
 void  SetupTimer0(void);
@@ -38,6 +41,7 @@ Encoder PendulumPosition(EncoderChannel_A, EncoderChannel_B);
   //Create a structure for movement data
 struct MovementParms
 {
+  signed int Count;
   signed int Position;
   signed int Velocity;
   signed int Acceleration;
@@ -48,6 +52,12 @@ struct MovementParms
 volatile struct MovementParms DesiredCart;
 volatile struct MovementParms CurrentCart;
 volatile struct MovementParms EncoderValue;
+
+
+CurrentCart.Velocity = 0;
+DesiredCart.Velocity = 0;
+CurrentCart.Count = 0;
+
 
 //**************************************
 //  Interrupt used to generate the servo 
@@ -63,12 +73,12 @@ ISR(TIMER1_COMPA_vect)
      if(CurrentCart.Direction == 1)
      {
         digitalWrite(DIR,1);
-        CurrentCart.Position++;
+        CurrentCart.Count++;
      }
      else
      {
        digitalWrite(DIR,0);
-       CurrentCart.Position--;
+       CurrentCart.Count--;
      }
   
      //Step once
@@ -98,7 +108,7 @@ ISR(TIMER0_COMPA_vect)
 // Pass in a velocity and update the step size
 // global variable which is read by the interrupt
 // to generate the stepper pulses. Speed is in 
-// the units mm/min. 
+// the units mm/sec. 
 //*******************************************
 void WriteStepSize(signed int Speed)
 {
@@ -113,16 +123,51 @@ void WriteStepSize(signed int Speed)
   } 
   
   //Check to prevent overflows, StepSpeed is 16 bit
-  if(Speed > 700 || Speed < -700)
+  if(Speed > 2 || Speed < -2)
   {
      //This is derived from the table above using a Power trendline
-     StepSpeed = (signed int)(9048739L/(abs(Speed)));
+     StepSpeed = (signed int)(107200/(abs(Speed)));
   }
   //This is like setting it to zero speed
   else
   {
      StepSpeed = 65000;
   }
+}
+
+//***********************************
+//  MotionAccelerationControl
+//
+//
+//***********************************
+void MotionAccelerationControl(void)
+{
+   //Acceleration is a signed value
+   //If positive check to make sure it is not bigger than max V
+   //else check the - max speed
+   
+   if(DesiredCart.Acceleration >= 0)
+   {
+      if(CurrentCart.Velocity < (MAX_CART_VELOCITY + DesiredCart.Acceleration))
+      {
+         CurrentCart.Velocity += DesiredCart.Acceleration; 
+      }
+      else
+      {
+        CurrentCart.Velocity = MAX_CART_VELOCITY;
+      }
+   }
+   else
+   {
+      if(CurrentCart.Velocity > (-MAX_CART_VELOCITY + DesiredCart.Acceleration))
+      {
+         CurrentCart.Velocity += DesiredCart.Acceleration;
+      }
+      else
+      {
+         CurrentCart.Velocity = -MAX_CART_VELOCITY;
+      }
+   }
 }
 //*********************************************
 //  SetupTimer0
@@ -204,21 +249,51 @@ void setup()
   Serial.begin(115200);
 }
 
+//*********************************************
+// Return Home
+//
+//********************************************
+bool ReturnHome()
+{
+   bool home = false;
+
+   DesiredCart.Velocity = 200;
+   
+   //Determine which direction to go
+   if(digitalRead(SWITCH1))
+   {
+      CurrentCart.Position = 0;
+      DesiredCart.Velocity = 0;
+      home = true;
+   }
+   return home;
+}
+
+
 void loop()
 {
   if(RunTask_10ms)
   {
-    EncoderValue.Position = PendulumPosition.read();
-    Serial.println(EncoderValue.Position);
+    EncoderValue.Count = PendulumPosition.read();
+    Serial.println(EncoderValue.Count);
     
+    //Turn the number of counts in a position in mm
+    CurrentCart.Position = (signed int)((float)CurrentCart.Count/3.3799);
     
     digitalWrite(LED_YELLOW,HIGH);
-
-    if(digitalRead(SWITCH1))
+    
+    /*if(digitalRead(SWITCH1))
     {
       //Some form of speed command
-      WriteStepSize(4000);
-      digitalWrite(LED_GREEN,HIGH);
+      if(!digitalRead(LIMIT_HOME))
+      {
+        WriteStepSize(0);
+      }
+      else
+      {
+        WriteStepSize(4000);
+        digitalWrite(LED_GREEN,HIGH);
+      }
     }
     else if(digitalRead(SWITCH2))
     {
@@ -230,7 +305,8 @@ void loop()
       WriteStepSize(0);
       digitalWrite(LED_GREEN,LOW);
       digitalWrite(LED_RED,LOW);
-    }
+    }*/
+    
     RunTask_10ms = 0;
   }
 }
