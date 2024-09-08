@@ -22,8 +22,8 @@
 #define  EncoderChannel_A  2
 #define  EncoderChannel_B  3
 
-#define  MAX_CART_VELOCITY  175
-#define  MAX_CART_ACCELERATION  7
+#define  MAX_CART_VELOCITY  500  //875
+#define  MAX_CART_ACCELERATION  50 //100
 
 //Function prototypes
 void  SetupTimer1(void);
@@ -264,36 +264,71 @@ bool ReturnHome()
 {
    bool home = false;
 
-   pd.DesiredCart.Velocity = 200;
+   digitalWrite(LED_RED,HIGH);
+   digitalWrite(LED_GREEN,HIGH);
+   
+   if(pd.CurrentCart.Position > 5)
+   {
+      pd.DesiredCart.Velocity = -100;
+   }
+   else if(pd.CurrentCart.Position < -5)
+   {
+     pd.DesiredCart.Velocity = 100;
+   }
    
    //Determine which direction to go
-   if(digitalRead(LIMIT_HOME))
+   if(!digitalRead(LIMIT_HOME))
    {
-      pd.CurrentCart.Position = 0;
+      pd.CurrentCart.Count = 0;
       pd.DesiredCart.Velocity = 0;
+      pd.CurrentCart.Velocity = 0;
+      pd.DesiredCart.Acceleration = 0;
       home = true;
    }
+   WriteStepSize(pd.DesiredCart.Velocity);
    return home;
 }
+
+void PID_Loop()
+{
+  int error = 0;
+  static int pre_error = 0;
+
+  error = pd.EncoderValue.Count;
+
+  //Try
+  // P = 0.75
+  // D = 2.0
+
+  // P = 0.6
+  // D = 4.0  Better
+
+  // P = 0.6
+  // D = 8.0 
+  pd.DesiredCart.Acceleration = (int)((float)error * 0.6f) + ((float)(error - pre_error) * 8.0f) ;
+  pre_error = error;  
+}
+
 void SendSerialData()
 {
    // Send the three structures as binary data
-  // Serial.write((byte*)&pd,  sizeof(pd));
-  // Serial.println(" ");
-
-
+   Serial.write((byte*)&pd,  sizeof(pd));
 }
 
 void loop()
 {
   static int counter;
   static int previous_position;
+  static bool homed = false;
+  static bool homing = false;
+  static bool start_control = false;
+
   if(RunTask_10ms)
   {
     counter++;
     if(counter > 2)
     {
-      Serial.println(pd.CurrentCart.Position);
+      //SendSerialData();
       counter = 0;
     }
     //The Encoder has 2400 pulses per rev
@@ -303,37 +338,68 @@ void loop()
     //Turn the number of counts in a position in mm
     pd.CurrentCart.Position = (signed int)((float)pd.CurrentCart.Count/3.3799);
 
-    //Calculated velocity of the car
-    float calc_vel = (pd.CurrentCart.Position - previous_position)*100;
-    
-    previous_position = pd.CurrentCart.Position;
+    //Serial.println(pd.EncoderValue.Position);
 
     digitalWrite(LED_YELLOW,HIGH);
     
     if(digitalRead(SWITCH2))
     {
-      //pd.DesiredCart.Acceleration = 7;
-      pd.CurrentCart.Velocity = 200;
+      start_control = true;
       digitalWrite(LED_GREEN,HIGH);
     }
     else if(digitalRead(SWITCH1))
     {
-      //pd.DesiredCart.Acceleration = -7;
-      pd.CurrentCart.Velocity = -200;
+      start_control = false;
       digitalWrite(LED_RED,HIGH);
+    }
+
+
+    //If both Switches are pressed return home
+    if(digitalRead(SWITCH2) && digitalRead(SWITCH1))
+    {
+      homing = true;
+      start_control = false;
+    }
+
+    //Exit the homing logic.    
+    if(homed == true)
+    {
+      homing = false;
+      homed = false;
+    }
+
+    //Return back home using this function
+    if((homing==true) && (homed == false))
+    {
+      start_control = false;
+      homed = ReturnHome();
     }
     else
     {
-      //DesiredCart.Acceleration = 0;
-      pd.CurrentCart.Velocity = 0;
-      digitalWrite(LED_RED,LOW);
-      digitalWrite(LED_GREEN,LOW);
+       if(start_control == true)
+       {
+        PID_Loop();
+        MotionAccelerationControl();
+       }
+       else
+       {
+        pd.CurrentCart.Velocity = 0;
+        WriteStepSize(pd.CurrentCart.Velocity);
+       }
     }
-    
-    WriteStepSize(pd.CurrentCart.Velocity);
-    //MotionAccelerationControl();
 
-   // SendSerialData();
+    if(pd.EncoderValue.Position > 10 || pd.EncoderValue.Position < -10)
+    {
+      start_control = false;
+    }
+
+    Serial.print(homing);
+    Serial.print(",");
+    Serial.print(homed);
+    Serial.print(",");
+    Serial.println(pd.CurrentCart.Position);
+
+
     pd.EncoderValue.Acceleration = TCNT0;
     pd.EncoderValue.Velocity = 75;
     pd.EncoderValue.Direction = 30000;
