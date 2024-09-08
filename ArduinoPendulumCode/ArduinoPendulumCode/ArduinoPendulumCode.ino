@@ -22,8 +22,8 @@
 #define  EncoderChannel_A  2
 #define  EncoderChannel_B  3
 
-#define  MAX_CART_VELOCITY  30000
-#define  MAX_CART_ACCELERATION  2000
+#define  MAX_CART_VELOCITY  175
+#define  MAX_CART_ACCELERATION  7
 
 //Function prototypes
 void  SetupTimer1(void);
@@ -45,19 +45,18 @@ struct MovementParms
   signed int Position;
   signed int Velocity;
   signed int Acceleration;
-  bool Direction;
+  signed int Direction;
 };
 
-//Create instance of three structures 
-volatile struct MovementParms DesiredCart;
-volatile struct MovementParms CurrentCart;
-volatile struct MovementParms EncoderValue;
+struct PendulumData
+{
+  //Create instance of three structures 
+  volatile struct MovementParms DesiredCart;
+  volatile struct MovementParms CurrentCart;
+  volatile struct MovementParms EncoderValue;
+};
 
-
-CurrentCart.Velocity = 0;
-DesiredCart.Velocity = 0;
-CurrentCart.Count = 0;
-
+PendulumData pd;
 
 //**************************************
 //  Interrupt used to generate the servo 
@@ -70,15 +69,15 @@ ISR(TIMER1_COMPA_vect)
    if(StepSpeed < 64000)
    {
      //Check the direction pin and determine the position
-     if(CurrentCart.Direction == 1)
+     if(pd.CurrentCart.Direction == 1)
      {
         digitalWrite(DIR,1);
-        CurrentCart.Count++;
+        pd.CurrentCart.Count++;
      }
      else
      {
        digitalWrite(DIR,0);
-       CurrentCart.Count--;
+       pd.CurrentCart.Count--;
      }
   
      //Step once
@@ -115,18 +114,18 @@ void WriteStepSize(signed int Speed)
   //Set the direction pin based on the sign of the speed
   if(Speed > 0)
   {
-     CurrentCart.Direction = 1;
+     pd.CurrentCart.Direction = 1;
   }
   else
   {
-     CurrentCart.Direction = 0;
+     pd.CurrentCart.Direction = 0;
   } 
   
   //Check to prevent overflows, StepSpeed is 16 bit
   if(Speed > 2 || Speed < -2)
   {
      //This is derived from the table above using a Power trendline
-     StepSpeed = (signed int)(107200/(abs(Speed)));
+     StepSpeed = (signed int)(591733/(abs(Speed)));
   }
   //This is like setting it to zero speed
   else
@@ -146,28 +145,30 @@ void MotionAccelerationControl(void)
    //If positive check to make sure it is not bigger than max V
    //else check the - max speed
    
-   if(DesiredCart.Acceleration >= 0)
+   if(pd.DesiredCart.Acceleration >= 0)
    {
-      if(CurrentCart.Velocity < (MAX_CART_VELOCITY + DesiredCart.Acceleration))
+      if(pd.CurrentCart.Velocity < (MAX_CART_VELOCITY + pd.DesiredCart.Acceleration))
       {
-         CurrentCart.Velocity += DesiredCart.Acceleration; 
+         pd.CurrentCart.Velocity += pd.DesiredCart.Acceleration; 
       }
       else
       {
-        CurrentCart.Velocity = MAX_CART_VELOCITY;
+        pd.CurrentCart.Velocity = MAX_CART_VELOCITY;
       }
    }
    else
    {
-      if(CurrentCart.Velocity > (-MAX_CART_VELOCITY + DesiredCart.Acceleration))
+      if(pd.CurrentCart.Velocity > (-MAX_CART_VELOCITY + pd.DesiredCart.Acceleration))
       {
-         CurrentCart.Velocity += DesiredCart.Acceleration;
+         pd.CurrentCart.Velocity += pd.DesiredCart.Acceleration;
       }
       else
       {
-         CurrentCart.Velocity = -MAX_CART_VELOCITY;
+         pd.CurrentCart.Velocity = -MAX_CART_VELOCITY;
       }
    }
+
+   WriteStepSize(pd.CurrentCart.Velocity);
 }
 //*********************************************
 //  SetupTimer0
@@ -222,6 +223,12 @@ void SetupTimer1()
 //****************************************
 void setup()
 {
+  //Initialize Variables
+  pd.CurrentCart.Velocity = 0;
+  pd.DesiredCart.Velocity = 0;
+  pd.CurrentCart.Count = 0;
+  pd.DesiredCart.Acceleration = 1;
+
   //Setup Inputs
   pinMode(LIMIT_HOME, INPUT);
   pinMode(SWITCH1, INPUT);
@@ -257,56 +264,79 @@ bool ReturnHome()
 {
    bool home = false;
 
-   DesiredCart.Velocity = 200;
+   pd.DesiredCart.Velocity = 200;
    
    //Determine which direction to go
-   if(digitalRead(SWITCH1))
+   if(digitalRead(LIMIT_HOME))
    {
-      CurrentCart.Position = 0;
-      DesiredCart.Velocity = 0;
+      pd.CurrentCart.Position = 0;
+      pd.DesiredCart.Velocity = 0;
       home = true;
    }
    return home;
 }
+void SendSerialData()
+{
+   // Send the three structures as binary data
+  // Serial.write((byte*)&pd,  sizeof(pd));
+  // Serial.println(" ");
 
+
+}
 
 void loop()
 {
+  static int counter;
+  static int previous_position;
   if(RunTask_10ms)
   {
-    EncoderValue.Count = PendulumPosition.read();
-    Serial.println(EncoderValue.Count);
+    counter++;
+    if(counter > 2)
+    {
+      Serial.println(pd.CurrentCart.Position);
+      counter = 0;
+    }
+    //The Encoder has 2400 pulses per rev
+    pd.EncoderValue.Count = -1*PendulumPosition.read();
+    pd.EncoderValue.Position = (signed int)((float)pd.EncoderValue.Count/6.66666);
     
     //Turn the number of counts in a position in mm
-    CurrentCart.Position = (signed int)((float)CurrentCart.Count/3.3799);
+    pd.CurrentCart.Position = (signed int)((float)pd.CurrentCart.Count/3.3799);
+
+    //Calculated velocity of the car
+    float calc_vel = (pd.CurrentCart.Position - previous_position)*100;
     
+    previous_position = pd.CurrentCart.Position;
+
     digitalWrite(LED_YELLOW,HIGH);
     
-    /*if(digitalRead(SWITCH1))
+    if(digitalRead(SWITCH2))
     {
-      //Some form of speed command
-      if(!digitalRead(LIMIT_HOME))
-      {
-        WriteStepSize(0);
-      }
-      else
-      {
-        WriteStepSize(4000);
-        digitalWrite(LED_GREEN,HIGH);
-      }
+      //pd.DesiredCart.Acceleration = 7;
+      pd.CurrentCart.Velocity = 200;
+      digitalWrite(LED_GREEN,HIGH);
     }
-    else if(digitalRead(SWITCH2))
+    else if(digitalRead(SWITCH1))
     {
-      WriteStepSize(-4000);
+      //pd.DesiredCart.Acceleration = -7;
+      pd.CurrentCart.Velocity = -200;
       digitalWrite(LED_RED,HIGH);
     }
     else
     {
-      WriteStepSize(0);
-      digitalWrite(LED_GREEN,LOW);
+      //DesiredCart.Acceleration = 0;
+      pd.CurrentCart.Velocity = 0;
       digitalWrite(LED_RED,LOW);
-    }*/
+      digitalWrite(LED_GREEN,LOW);
+    }
     
+    WriteStepSize(pd.CurrentCart.Velocity);
+    //MotionAccelerationControl();
+
+   // SendSerialData();
+    pd.EncoderValue.Acceleration = TCNT0;
+    pd.EncoderValue.Velocity = 75;
+    pd.EncoderValue.Direction = 30000;
     RunTask_10ms = 0;
   }
 }
