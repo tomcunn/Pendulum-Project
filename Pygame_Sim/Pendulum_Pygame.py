@@ -42,7 +42,7 @@ x = 0
 # Line properties
 base_point = (x, 300)  # Center of the screen
 line_length = 150
-angle = 1.0  # Initial angle
+angle = 3.0  # Initial angle
 time_step = 0.01
 prev_angle = 0
 cart_vel = 0
@@ -99,7 +99,7 @@ while running:
         x = x + cart_vel * time_step
         base_point = (x*meters_to_pixels+400, 300)  # Center of the screen
         
-        cart_accel = (setpoint - angle) * -2.0 + (angle-prev_angle) * 8.0
+        #cart_accel = (setpoint - angle) * -2.0 + (angle-prev_angle) * 8.0
         
         prev_angle = angle
 
@@ -142,6 +142,8 @@ while running:
     pygame.draw.line(screen, BLUE, (20,300), (780,300),20)    
     pygame.draw.line(screen, BLACK, base_point, end_point, 7)
     
+    with open('mydata.txt', 'a') as file:
+        file.write(f"{frame_count},{angle},{angle_velocity},{angle_acceleration},{x},{cart_vel},{cart_accel}\n")
 
     # Update the display
     pygame.display.flip()
